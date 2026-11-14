@@ -1,0 +1,15 @@
+Soma Pamoja server health check
+Time: 2026-11-14T23:54:27+00:00
+Host: soma-pamoja
+
+Disk usage: 41%
+Memory available: 536 MB
+Load average, 1 minute: 0.03
+Uptime: up 55 minutes
+
+OK: disk usage is below 80%
+OK: 1-minute load is below 4.00
+OK: service ssh is active
+OK: service cron is active
+
+PASS: all health checks passed
