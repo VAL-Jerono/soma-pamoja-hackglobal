@@ -1,0 +1,14 @@
+# Local: SITE_ADDRESS unset is supplied as :80 by Compose.
+# Vultr: SITE_ADDRESS can be an sslip.io hostname or your own domain.
+{$SITE_ADDRESS} {
+	encode gzip
+	request_body {
+		max_size 6MB
+	}
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+	reverse_proxy sp-api:8000
+}

@@ -1,0 +1,73 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Soma Pamoja</title>
+<style>
+:root{--ink:#14201e;--bg:#eaf1ee;--teal:#0f4c4a;--sun:#f2b705;--line:#c5d4cf;--card:#fff}
+*{box-sizing:border-box}body{margin:0;font:17px/1.5 Georgia,serif;color:var(--ink);background:var(--bg)}
+header{background:var(--teal);color:#fff;padding:14px 18px}header h1{margin:0;font-size:22px}
+header p{margin:2px 0 0;font-size:14px;opacity:.85}
+nav{display:flex;gap:6px;padding:10px 18px}nav button{font:inherit;padding:8px 14px;border:1px solid var(--teal);background:#fff;border-radius:6px}
+nav button[aria-pressed=true]{background:var(--teal);color:#fff}
+main{max-width:640px;margin:0 auto;padding:0 18px 40px}section{display:none}section.on{display:block}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px;margin:12px 0}
+.big{font-size:34px;line-height:1.25;margin:8px 0}.pic{font-size:72px}
+button.go{font:inherit;padding:12px 18px;border:0;border-radius:8px;background:var(--sun);color:var(--ink);font-weight:bold;margin:4px 6px 4px 0}
+button:focus-visible,input:focus-visible{outline:3px solid var(--teal);outline-offset:2px}
+input{font:inherit;padding:9px;border:1px solid var(--line);border-radius:6px;width:100%}
+.meta{font-size:14px;color:#46605b}.warn{background:#fff3cd;border-color:var(--sun)}
+table{width:100%;border-collapse:collapse}td,th{padding:6px;border-bottom:1px solid var(--line);text-align:left;font-size:15px}
+</style></head><body>
+<header><h1>Soma Pamoja</h1><p>Read together. A voice-first Swahili reading tutor.</p></header>
+<nav><button id="t1" aria-pressed="true">Reading session</button><button id="t2" aria-pressed="false">Partner dashboard</button></nav>
+<main>
+<section id="s1" class="on">
+ <div class="card"><label for="code">Learner code</label><input id="code" value="L-001"></div>
+ <button class="go" id="next">Start next activity</button>
+ <div id="banner" class="card warn" hidden><b>DRAFT CONTENT.</b> This activity is not yet validated by the required human reviewers.</div>
+ <div id="act" class="card" hidden>
+  <div class="pic" id="pic"></div><div class="big" id="txt"></div><div class="meta" id="en"></div>
+  <button class="go" id="listen">Listen</button><button class="go" id="rec">Record child reading</button>
+  <div class="meta" style="margin-top:8px">Demo without a microphone:</div>
+  <input id="typed" placeholder="Type what the child read"><button class="go" id="send">Check typed reading</button>
+ </div>
+ <div id="res" class="card" hidden></div>
+ <div id="comp" class="card" hidden><b>Comprehension question</b><p id="qtext"></p>
+  <button class="go" data-verdict="understood">Understood</button>
+  <button class="go" data-verdict="with_help">With help</button>
+  <button class="go" data-verdict="not_yet">Not yet</button>
+  <button class="go" data-verdict="not_sure">Not sure</button>
+  <p class="meta" id="compmsg"></p>
+ </div>
+</section>
+<section id="s2"><div class="card" id="dash">Loading...</div>
+ <p class="meta">All figures here are demo data from test sessions, not field results.</p></section>
+</main>
+<script>
+const $=id=>document.getElementById(id);let cur=null,mr=null,chunks=[];
+function tab(n){["1","2"].forEach(i=>{$("s"+i).classList.toggle("on",i==n);$("t"+i).setAttribute("aria-pressed",i==n)});if(n==2)dash()}
+$("t1").onclick=()=>tab(1);$("t2").onclick=()=>tab(2);
+$("next").onclick=async()=>{const resp=await fetch("/api/next?learner="+encodeURIComponent($("code").value));if(!resp.ok){alert((await resp.json()).detail);return}const r=await resp.json();
+ cur=r.passage;$("banner").hidden=!r.draft;$("act").hidden=false;$("res").hidden=true;$("comp").hidden=true;$("pic").textContent=cur.picture;$("txt").textContent=cur.text;$("en").textContent="Level "+r.level+". "+cur.en};
+$("listen").onclick=()=>{const u=new SpeechSynthesisUtterance(cur.text);u.lang="sw-KE";speechSynthesis.speak(u)};
+async function submit(fd){fd.append("learner",$("code").value);fd.append("passage",cur.id);
+ const r=await (await fetch("/api/attempt",{method:"POST",body:fd})).json();show(r)}
+$("send").onclick=()=>{const f=new FormData();f.append("typed",$("typed").value);submit(f)};
+$("rec").onclick=async()=>{if(mr&&mr.state=="recording"){mr.stop();return}
+ const s=await navigator.mediaDevices.getUserMedia({audio:true});mr=new MediaRecorder(s);chunks=[];
+ mr.ondataavailable=e=>chunks.push(e.data);mr.onstop=()=>{s.getTracks().forEach(t=>t.stop());$("rec").textContent="Record child reading";
+  const f=new FormData();f.append("audio",new Blob(chunks,{type:"audio/webm"}),"a.webm");submit(f)};
+ mr.start();$("rec").textContent="Stop recording"};
+function show(r){const d=$("res");d.hidden=false;d.className="card"+(r.deferred?" warn":"");
+ d.innerHTML=`<div class="big">${Math.round(r.accuracy*100)}% match</div><p>${r.feedback}</p>
+ <div class="meta">Heard: "${r.heard||"nothing"}" (${r.engine}, confidence ${r.confidence})<br>Source: ${r.source}. Validation: ${r.validator}. Trace: ${r.trace_id.slice(0,8)}.</div>`;
+ if(r.deferred){d.innerHTML+=`<p><b>Speech recognition is unsure. The child is not marked wrong.</b></p>
+ <button class="go" id="ok">Facilitator: read correctly</button><button class="go" id="no">Needs practice</button>`;
+  $("ok").onclick=()=>conf(r.id,"correct");$("no").onclick=()=>conf(r.id,"incorrect")}
+  const q=(cur.questions||[])[0];if(q){$("comp").hidden=false;$("qtext").textContent=q.question_text;$("compmsg").textContent="";document.querySelectorAll("#comp [data-verdict]").forEach(b=>b.onclick=()=>recordComp(r.id,q.question_id,b.dataset.verdict))}}
+ async function recordComp(attemptId,questionId,verdict){const f=new FormData();f.append("learner",$("code").value);f.append("question_id",questionId);f.append("verdict",verdict);f.append("mode","read_aloud");f.append("attempt_id",attemptId);f.append("passage",cur.id);const r=await (await fetch("/api/comprehension",{method:"POST",body:f})).json();$("compmsg").textContent=r.event_id?"Recorded: "+verdict:(r.detail||"Could not record comprehension")}
+async function conf(id,a){const f=new FormData();f.append("id",id);f.append("verdict",a);await fetch("/api/confirm",{method:"POST",body:f});$("res").innerHTML="<p>Confirmed. Thank you.</p>"}
+async function dash(){const d=await (await fetch("/api/dashboard")).json();
+ $("dash").innerHTML=`<p><b>${d.attempts}</b> attempts, <b>${d.learners}</b> learners</p>
+ <p>Average accuracy ${Math.round(d.avg_accuracy*100)}%. Deferred to facilitator ${Math.round(d.deferral_rate*100)}%. Facilitator-confirmed ${Math.round(d.confirmed_rate*100)}%. Activities with a cited source ${Math.round(d.citation_rate*100)}%.</p>
+ <table><tr><th>Learner</th><th>Attempts</th><th>Accuracy</th></tr>${d.per_learner.map(r=>`<tr><td>${r[0]}</td><td>${r[1]}</td><td>${Math.round(r[2]*100)}%</td></tr>`).join("")}</table>`}
+</script></body></html>

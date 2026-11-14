@@ -1,0 +1,28 @@
+{
+  "fixtures": [
+    {
+      "id": "FIX-PERFECT-001",
+      "role": "scoring_test",
+      "content_type": "fixture",
+      "expected": "mama anapika",
+      "heard": "mama anapika",
+      "expected_accuracy": 1.0
+    },
+    {
+      "id": "FIX-OMISSION-001",
+      "role": "scoring_test",
+      "content_type": "fixture",
+      "expected": "mtoto anasoma kitabu",
+      "heard": "mtoto anasoma",
+      "expected_omissions": 1
+    },
+    {
+      "id": "FIX-LOW-CONF-001",
+      "role": "gate_test",
+      "content_type": "fixture",
+      "confidence": 0.3,
+      "accuracy": 0.4,
+      "expected_verdict": "defer"
+    }
+  ]
+}

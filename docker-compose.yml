@@ -1,0 +1,57 @@
+services:
+  sp-db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sp
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: sp
+    volumes:
+      - sp_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sp"]
+      interval: 3s
+      retries: 20
+
+  sp-api:
+    build:
+      context: ./api
+      args:
+        WITH_LOCAL_STT: "${WITH_LOCAL_STT:-0}"
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      DATABASE_URL: "postgresql://sp:${POSTGRES_PASSWORD}@sp-db:5432/sp"
+      BANK_PATH: /srv/data/bank/bank.json
+      MICRO_ITEMS_PATH: /srv/data/micro_reading/micro_items.json
+      ACTIVITY_PATH: /srv/data/activities/activities.json
+      EVAL_SUMMARY_PATH: /srv/data/eval/results/latest.json
+      RAG_CHUNKS_PATH: /srv/data/rag/chunks.jsonl
+    volumes:
+      - "./data/bank:/srv/data/bank:ro"
+      - "./data/micro_reading:/srv/data/micro_reading:ro"
+      - "./data/activities:/srv/data/activities:ro"
+      - "./data/eval:/srv/data/eval:ro"
+      - "./data/rag:/srv/data/rag:ro"
+
+    depends_on:
+      sp-db:
+        condition: service_healthy
+
+  sp-proxy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      SITE_ADDRESS: ${SITE_ADDRESS:-:80}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - sp_caddy:/data
+    depends_on:
+      - sp-api
+
+volumes:
+  sp_pgdata: {}
+  sp_caddy: {}

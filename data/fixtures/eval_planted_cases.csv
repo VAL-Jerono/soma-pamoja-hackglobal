@@ -1,0 +1,11 @@
+fixture_id,sample_id,passage_id,reader_id,reading_condition,expected_text,human_transcript,human_verdict,expected_error_type,fixture_only
+FIX-001,EVAL-FIX-001,SW-M-001,ADULT-FIX-01,fluent,Mama anapika.,Mama anapika.,correct,none,true
+FIX-002,EVAL-FIX-002,SW-M-001,ADULT-FIX-01,omission,Mama anapika.,Mama,incorrect,omission,true
+FIX-003,EVAL-FIX-003,SW-M-001,ADULT-FIX-02,substitution,Mama anapika.,Mama anakula.,incorrect,substitution,true
+FIX-004,EVAL-FIX-004,SW-M-001,ADULT-FIX-02,insertion,Mama anapika.,Mama mkubwa anapika.,incorrect,insertion,true
+FIX-005,EVAL-FIX-005,SW-M-002,ADULT-FIX-01,fluent,Paka analala.,Paka analala.,correct,none,true
+FIX-006,EVAL-FIX-006,SW-M-002,ADULT-FIX-02,omission,Paka analala.,Paka,incorrect,omission,true
+FIX-007,EVAL-FIX-007,SW-M-003,ADULT-FIX-03,fluent,Mtoto anasoma kitabu.,Mtoto anasoma kitabu.,correct,none,true
+FIX-008,EVAL-FIX-008,SW-M-003,ADULT-FIX-03,hesitant,Mtoto anasoma kitabu.,Mtoto anasoma kitabu.,correct,none,true
+FIX-009,EVAL-FIX-009,SW-M-004,ADULT-FIX-02,substitution,Baba analima shamba.,Baba analima nyumba.,incorrect,substitution,true
+FIX-010,EVAL-FIX-010,SW-M-005,ADULT-FIX-01,uncertain,Watoto husoma pamoja chini ya mti.,,uncertain,unknown,true
