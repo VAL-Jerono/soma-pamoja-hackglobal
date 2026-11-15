@@ -16,7 +16,9 @@ export default defineConfig(({ mode }) => {
           if (mode === 'production' && env.VITE_MOCK === '1') {
             throw new Error('VITE_MOCK=1 is development-only and cannot be deployed')
           }
-          const origin = apiBase ? new URL(apiBase).origin : "'none'"
+          // The strict policy applies to production builds only. Dev needs inline scripts for hot reload.
+          if (mode !== 'production') return html.replace('<!-- CSP_INJECT -->', '')
+          const origin = new URL(apiBase).origin
           return html.replace('<!-- CSP_INJECT -->', `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; media-src 'self' blob:; connect-src 'self' ${origin}; base-uri 'none'; form-action 'none'">`)
         }
       }

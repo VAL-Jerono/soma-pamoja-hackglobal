@@ -3,6 +3,10 @@ import { copy } from '../src/i18n'
 import { machineResultFor, newChildSessionId, optionText } from '../src/lib/activity'
 import { buildAttemptForm } from '../src/lib/attemptForm'
 import { childErrorMessage, detailText, facilitatorErrorMessage, pinErrorMessage } from '../src/lib/errors'
+import { buildLessons, firstOpenLesson, firstOpenStep, isLessonDone, parseDone } from '../src/lib/lessons'
+import { learnerName, parseRoster, removeLearner, upsertLearner } from '../src/lib/roster'
+import { PAPER_HANDOFF, writingResponse } from '../src/lib/activity'
+import type { Activity } from '../src/api/types'
 import { childMessage, isLearnerCode, normalizeLearnerInput } from '../src/lib/validation'
 
 describe('frontend trust contracts', () => {
@@ -20,7 +24,7 @@ describe('frontend trust contracts', () => {
   it('keeps child messages warm and non-numeric', () => {
     expect(childMessage('auto_ok')).toContain('Vizuri')
     expect(childMessage('auto_practice')).not.toContain('%')
-    expect(childMessage('defer')).toContain('mwezeshaji')
+    expect(childMessage('defer')).toContain('mwalimu')
   })
 })
 
@@ -98,5 +102,67 @@ describe('copy rules', () => {
       expect(text).not.toMatch(/\d/)
       expect(text).not.toMatch(/confidence|accuracy|wrong/i)
     }
+  })
+})
+
+const act = (id: string, modality: Activity['modality'], item: string, topic = 'school'): Activity => ({
+  activity_id: id, micro_item_id: item, learning_area: 'x', topic, concept: 'x', band: 'b', modality, target_skill: 's', prompt_text: 'p', prompt_audio_file: '', picture: '📖', options: [],
+  expected_response: '', marking_method: 'm', content_version: '1', source_id: 's', status: 'draft', validator_status: 'draft', content_hash: 'h', parent_text: 'Mtoto anasoma kitabu.', parent_en: 'The child reads.'
+})
+
+describe('lessons', () => {
+  const list = [act('A4', 'writing', 'M1'), act('A1', 'reading', 'M1'), act('A3', 'speaking', 'M1'), act('A2', 'listening', 'M1'), act('A5', 'speaking', 'M2', 'family')]
+  it('groups activities into lessons and orders read, listen, speak, write', () => {
+    const lessons = buildLessons(list)
+    expect(lessons).toHaveLength(2)
+    expect(lessons[0].activities.map(a => a.modality)).toEqual(['reading', 'listening', 'speaking', 'writing'])
+    expect(lessons[1].theme).toBe('family')
+  })
+  it('does not change the list it was given', () => {
+    const before = list.map(a => a.activity_id)
+    buildLessons(list)
+    expect(list.map(a => a.activity_id)).toEqual(before)
+  })
+  it('resumes at the first unfinished step and lesson', () => {
+    const lessons = buildLessons(list)
+    expect(firstOpenLesson(lessons, new Set())).toBe(0)
+    expect(firstOpenStep(lessons[0], new Set(['A1', 'A2']))).toBe(2)
+    expect(isLessonDone(lessons[0], new Set(['A1', 'A2', 'A3', 'A4']))).toBe(true)
+    expect(firstOpenLesson(lessons, new Set(['A1', 'A2', 'A3', 'A4']))).toBe(1)
+    expect(firstOpenLesson(lessons, new Set(['A1', 'A2', 'A3', 'A4', 'A5']))).toBe(-1)
+  })
+  it('reads saved day progress safely', () => {
+    expect(parseDone('["A1","A2"]')).toEqual(['A1', 'A2'])
+    expect(parseDone('not json')).toEqual([])
+    expect(parseDone('{"a":1}')).toEqual([])
+    expect(parseDone(null)).toEqual([])
+  })
+})
+
+describe('writing response', () => {
+  it('sends typed text, or the paper marker when nothing was typed', () => {
+    expect(writingResponse('  kitabu ')).toBe('kitabu')
+    expect(writingResponse('   ')).toBe(PAPER_HANDOFF)
+    expect(writingResponse('a'.repeat(5000)).length).toBe(4000)
+  })
+})
+
+describe('private teacher roster', () => {
+  it('keeps labels on the device and only valid pseudonymous codes', () => {
+    const roster = parseRoster(JSON.stringify([{ code: 'L-001', label: 'Amina', note: '' }, { code: 'Amina', label: 'x' }, { code: 'L-001', label: 'dup' }]))
+    expect(roster).toHaveLength(1)
+    expect(learnerName(roster, 'L-001')).toBe('Amina (L-001)')
+    expect(learnerName(roster, 'L-002')).toBe('L-002')
+  })
+  it('adds, updates and removes without changing the input', () => {
+    const a = upsertLearner([], { code: 'L-001', label: 'Amina' }, 1)
+    const b = upsertLearner(a, { code: 'L-001', note: 'needs help' }, 2)
+    expect(a[0].note).toBe('')
+    expect(b[0]).toMatchObject({ label: 'Amina', note: 'needs help', lastSeen: 2 })
+    expect(removeLearner(b, 'L-001')).toEqual([])
+  })
+  it('survives corrupt storage', () => {
+    expect(parseRoster('{{')).toEqual([])
+    expect(parseRoster(null)).toEqual([])
   })
 })

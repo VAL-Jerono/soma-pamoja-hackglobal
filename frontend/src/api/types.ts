@@ -22,7 +22,7 @@ export interface Activity {
   content_hash: string; parent_text: string; parent_en: string
 }
 export interface ActivityList { learner: string; activities: Activity[]; draft: boolean }
-export interface ActivityEvent { event_id: string; learner: string; activity_id: string; modality: ActivityModality; content_hash: string; machine_result: string; teacher_result: TeacherResult | null; final_result: TeacherResult | null; marked_by: string | null; session_id: string | null; created_at: string | null; marked_at: string | null }
+export interface ActivityEvent { event_id: string; response_text?: string; learner: string; activity_id: string; modality: ActivityModality; content_hash: string; machine_result: string; teacher_result: TeacherResult | null; final_result: TeacherResult | null; marked_by: string | null; session_id: string | null; created_at: string | null; marked_at: string | null }
 export interface ActivityQueue { events: ActivityEvent[] }
 export interface ActivityProgress { learner: string; by_modality: { modality: ActivityModality; events: number; marked: number }[] }
 export interface GuideResult { query: string; answer: string; citation_status: string; citation?: string; source_url?: string; results: { chunk_id: string; title: string; location: string; license_status: string; rights_decision: string; text: string; score: number; citation: string }[] }

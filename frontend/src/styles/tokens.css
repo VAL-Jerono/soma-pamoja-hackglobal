@@ -1,1 +1,35 @@
-:root{color-scheme:light;--paper:#fbf5e9;--paper-2:#f3ead7;--card:#fff;--ink:#1e2b28;--muted:#4b5f5a;--baobab:#0f4c4a;--baobab-2:#1b6b67;--sun:#f2b705;--sun-soft:#ffe9a8;--terra:#b84a32;--leaf:#2e7d4f;--line:#d9cdb4;--focus:#0f4c4a;--r-md:16px;--r-lg:28px;--shadow-1:0 1px 0 rgba(30,43,40,.06),0 6px 18px -8px rgba(30,43,40,.18);--shadow-2:0 2px 0 rgba(30,43,40,.06),0 18px 40px -18px rgba(30,43,40,.28)}
+:root {
+  color-scheme: light;
+  --paper: #fbf5e9;
+  --paper-2: #f3ead7;
+  --card: #fff;
+  --ink: #1e2b28;
+  --muted: #4b5f5a;
+  --baobab: #0f4c4a;
+  --baobab-2: #1b6b67;
+  --sun: #f2b705;
+  --sun-soft: #ffe9a8;
+  --terra: #b84a32;
+  --leaf: #2e7d4f;
+  --sky: #2f80c9;
+  --berry: #b8386e;
+  --line: #d9cdb4;
+  --focus: #0f4c4a;
+  --r-sm: 12px;
+  --r-md: 16px;
+  --r-lg: 28px;
+  --shadow-1: 0 1px 0 rgba(30, 43, 40, .06), 0 6px 18px -8px rgba(30, 43, 40, .18);
+  --shadow-2: 0 2px 0 rgba(30, 43, 40, .06), 0 18px 40px -18px rgba(30, 43, 40, .28);
+  --emoji: 'Apple Color Emoji', 'Segoe UI Emoji', 'Noto Color Emoji', 'Twemoji Mozilla', sans-serif;
+
+  /* Lesson theme, overridden per topic on learner screens */
+  --t1: #ffe9a8;
+  --t2: #f8c94a;
+  --t3: #1b6b67;
+}
+
+[data-theme='school'] { --t1: #cfe6fb; --t2: #7fb8ee; --t3: #1f5f9e; }
+[data-theme='family'] { --t1: #ffd9c7; --t2: #f4a07c; --t3: #a8442b; }
+[data-theme='animals'] { --t1: #d7efc9; --t2: #8fcf72; --t3: #2e7d4f; }
+[data-theme='water'] { --t1: #c9f0ee; --t2: #66cfc9; --t3: #17766f; }
+[data-theme='default'] { --t1: #ffe9a8; --t2: #f8c94a; --t3: #1b6b67; }

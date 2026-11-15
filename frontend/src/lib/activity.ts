@@ -22,3 +22,13 @@ export function machineResultFor(verdict: Verdict): 'auto_correct' | 'auto_pract
 export function newChildSessionId(now: number = Date.now(), random: number = Math.random()): string {
   return `child-${now.toString(36)}-${random.toString(36).slice(2, 8)}`
 }
+
+/** Writing responses are capped by the backend at 4000 characters. */
+export const MAX_WRITING = 4000
+export const PAPER_HANDOFF = 'paper_handoff'
+
+/** What a writing step sends: the typed text, or the paper handoff marker when nothing was typed. */
+export function writingResponse(text: string): string {
+  const trimmed = text.trim().slice(0, MAX_WRITING)
+  return trimmed || PAPER_HANDOFF
+}

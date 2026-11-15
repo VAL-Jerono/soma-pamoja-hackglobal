@@ -5,21 +5,20 @@ type ChildResultProps = {
   result: AttemptResult
   lang: Lang
   next: () => void
-  onFacilitator: () => void
 }
 
-/** Gentle, child-facing result. No scores, confidence, reason codes or error language. */
-export function ChildResult({ result, lang, next, onFacilitator }: ChildResultProps) {
+/**
+ * Gentle, child-facing result. No scores, confidence, reason codes or error language.
+ * Nothing here points a child at teacher tools. A teacher hears about unsure readings through the mark queue.
+ */
+export function ChildResult({ result, lang, next }: ChildResultProps) {
   const t = copy[lang]
   if (result.deferred) {
     return (
       <div className="result defer" role="status">
         <h3>{t.handover}</h3>
         <p>{t.handoverNote}</p>
-        <div className="actions">
-          <button className="warm" onClick={onFacilitator}>{t.facilitator}</button>
-          <button className="secondary" onClick={next}>{t.next}</button>
-        </div>
+        <div className="actions"><button className="primary" onClick={next}>{t.next}</button></div>
       </div>
     )
   }
@@ -28,10 +27,7 @@ export function ChildResult({ result, lang, next, onFacilitator }: ChildResultPr
     <div className="result" role="status">
       <h3>{good ? t.great : t.practice}</h3>
       <p>{good ? t.readTogether : t.readAgain}</p>
-      <div className="actions">
-        <button className="primary" onClick={next}>{t.next}</button>
-        {!good && <button className="secondary" onClick={onFacilitator}>{t.facilitator}</button>}
-      </div>
+      <div className="actions"><button className="primary" onClick={next}>{t.next}</button></div>
     </div>
   )
 }

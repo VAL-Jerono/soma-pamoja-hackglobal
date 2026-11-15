@@ -47,6 +47,8 @@ export function Recorder({ learner, passage, lang, onResult }: RecorderProps) {
     let stream: MediaStream | null = null
     try {
       stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: true, noiseSuppression: true } })
+      // Left the screen while the permission prompt was open: release the microphone at once.
+      if (cancelled.current) { stream.getTracks().forEach(track => track.stop()); return }
       const type = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
         ? 'audio/webm;codecs=opus'
         : MediaRecorder.isTypeSupported('audio/mp4') ? 'audio/mp4' : ''

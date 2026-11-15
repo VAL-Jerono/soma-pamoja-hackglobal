@@ -1,191 +1,39 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
-import { activityProgress, activityQueue, guideSearch, listActivities, login, markActivity, respondActivity } from '../api/client'
-import type { Activity, ActivityModality, ActivityProgress, ActivityQueue, AttemptResult, GuideResult, TeacherResult } from '../api/types'
+import { activityProgress, activityQueue, guideSearch, listActivities, login, markActivity } from '../api/client'
+import type { Activity, ActivityModality, ActivityProgress, ActivityQueue, GuideResult, TeacherResult } from '../api/types'
 import { copy, type Lang } from '../i18n'
-import { machineResultFor, newChildSessionId, optionText } from '../lib/activity'
-import { childErrorMessage, facilitatorErrorMessage, isUnauthorized, pinErrorMessage } from '../lib/errors'
-import { speakKiswahili } from '../lib/speech'
-import { readSession, removeSession, writeSession } from '../lib/storage'
+import { facilitatorErrorMessage, isUnauthorized, pinErrorMessage } from '../lib/errors'
+import { learnerName, parseRoster, removeLearner, ROSTER_KEY, upsertLearner, MAX_LABEL, type RosterEntry } from '../lib/roster'
+import { readPreference, readSession, removeSession, writePreference, writeSession } from '../lib/storage'
 import { isLearnerCode, normalizeLearnerInput } from '../lib/validation'
-import { ChildResult } from './ChildResult'
-import { Recorder } from './Recorder'
+import { Scene } from './Scene'
 
 type RouteName = 'welcome' | 'session' | 'facilitator' | 'activities'
 type Tab = 'plan' | 'run' | 'mark' | 'progress' | 'guide' | 'reading'
 const modalities: ActivityModality[] = ['reading', 'listening', 'speaking', 'writing']
 const labels: Record<Tab, string> = { plan: 'Plan', run: 'Run', mark: 'Mark', progress: 'Progress', guide: 'Guide', reading: 'Reading desk' }
 const modalityLabels: Record<ActivityModality, string> = { reading: 'Reading', listening: 'Listening', speaking: 'Speaking', writing: 'Writing' }
-// Child-facing modality names. The Kiswahili names need native-speaker review.
-const childModalityLabels: Record<Lang, Record<ActivityModality, string>> = {
-  en: modalityLabels,
-  sw: { reading: 'Kusoma', listening: 'Kusikiliza', speaking: 'Kuzungumza', writing: 'Kuandika' }
+const modalityEmoji: Record<ActivityModality, string> = { reading: '👀', listening: '👂', speaking: '🎤', writing: '✍️' }
+const tabInfo: Record<Tab, { emoji: string; sub: string; help: string }> = {
+  plan: { emoji: '🗂️', sub: 'Choose', help: 'Choose who is learning and which activity comes next. Your private class list is kept on this device only.' },
+  run: { emoji: '▶️', sub: 'Deliver', help: 'Look at one activity, then open it for the learner. Machine evidence and your judgement stay separate.' },
+  mark: { emoji: '✅', sub: 'Check work', help: 'Picture answers, written work and unsure speech wait here for your mark.' },
+  progress: { emoji: '📈', sub: 'Follow', help: 'See how each learner is doing across reading, listening, speaking and writing. This is evidence, not a grade.' },
+  guide: { emoji: '📚', sub: 'Get help', help: 'Ask a question about teaching early reading. Answers are quoted from a small, checked set of sources.' },
+  reading: { emoji: '🎧', sub: 'Review reading', help: 'Listen to a child read, check what the machine heard, and record understanding separately.' }
 }
+const machineText = (value: string) => value === 'deferred' ? 'needs your judgement' : value === 'auto_correct' ? 'machine: sounded right' : value === 'auto_practice' ? 'machine: needs practice' : value
+const resultText: Record<TeacherResult, string> = { correct: 'Correct', with_help: 'With help', not_yet: 'Not yet', not_sure: 'Not sure' }
 // Honest, facilitator-facing description of how each modality really works today.
 const modalityHelp: Record<ActivityModality, string> = {
   reading: 'The child reads the sentence, then taps the picture that fits. Your mark confirms the response.',
   listening: 'The child hears the sentence from the browser voice and taps the picture. If the device has no Kiswahili voice, read the sentence aloud yourself. There is no recorded audio file yet.',
   speaking: 'The child reads aloud into the microphone. If the machine is unsure, it defers to you. Audio is not stored.',
-  writing: 'Paper handoff. The child writes on paper and taps finished. You mark the paper. The app does not read handwriting.'
+  writing: 'The child types the word, or writes in an exercise book and taps finished. You mark it. The app does not read handwriting.'
 }
 
 function DraftBadge() { return <span className="pill draft">Draft · human review pending</span> }
 const formatWhen = (iso: string) => { const d = new Date(iso); return Number.isNaN(d.getTime()) ? '' : d.toLocaleString() }
-
-export function ChildActivityRunner({ go, lang }: { go: (route: RouteName) => void; lang: Lang }) {
-  const t = copy[lang]
-  const [learner, setLearner] = useState(() => readSession('sp_learner', 'L-001'))
-  const [activities, setActivities] = useState<Activity[]>([])
-  const [index, setIndex] = useState(0)
-  const [message, setMessage] = useState('')
-  const [done, setDone] = useState(false)
-  const [finished, setFinished] = useState(false)
-  const [loading, setLoading] = useState(false)
-  const [speech, setSpeech] = useState<AttemptResult | null>(null)
-  const [voiceNote, setVoiceNote] = useState('')
-  const [sessionId] = useState(() => newChildSessionId())
-  const selected = activities[index] ?? null
-
-  const load = async () => {
-    setLoading(true)
-    setMessage('')
-    try {
-      writeSession('sp_learner', learner)
-      const data = await listActivities(learner)
-      setActivities(data.activities)
-      setIndex(0)
-      setDone(false)
-      setFinished(false)
-      setSpeech(null)
-      setVoiceNote('')
-      if (!data.activities.length) setMessage(t.noActivity)
-    } catch (e) {
-      setMessage(childErrorMessage(e, lang))
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  // The child screen never judges a response itself. Answer keys stay on the facilitator side,
-  // so picture and paper responses go to the facilitator as deferred, and speech relays the server verdict.
-  const record = async (response: string, machine: 'auto_correct' | 'auto_practice' | 'deferred') => {
-    if (!selected) return
-    setLoading(true)
-    setMessage('')
-    try {
-      await respondActivity({ learner, activity_id: selected.activity_id, response, machine_result: machine, session_id: sessionId })
-      setDone(true)
-    } catch (e) {
-      setMessage(childErrorMessage(e, lang))
-    } finally {
-      setLoading(false)
-    }
-  }
-  const saveSpeech = async (result: AttemptResult) => {
-    setSpeech(result)
-    await record(result.heard, machineResultFor(result.verdict))
-  }
-  // Moving on always clears the previous saved notice, voice note and speech result.
-  const advance = () => {
-    setMessage('')
-    setDone(false)
-    setSpeech(null)
-    setVoiceNote('')
-    if (index + 1 >= activities.length) setFinished(true)
-    else setIndex(index + 1)
-  }
-  const listen = () => { if (selected) setVoiceNote(speakKiswahili(selected.parent_text) ? t.browserVoice : t.noVoice) }
-
-  return (
-    <main>
-      <div className="screen">
-        <div className="split">
-          <div>
-            <div className="eyebrow">{t.childMode}</div>
-            <h2 className="section-title">Soma Pamoja</h2>
-          </div>
-          <button className="secondary" onClick={() => go('facilitator')}>{t.facilitator}</button>
-        </div>
-
-        {!activities.length && (
-          <div className="card">
-            <div className="field">
-              <label htmlFor="activity-learner">{t.code}</label>
-              <input id="activity-learner" inputMode="text" autoComplete="off" value={learner} onChange={e => setLearner(normalizeLearnerInput(e.target.value))} onKeyDown={e => { if (e.key === 'Enter' && isLearnerCode(learner) && !loading) load() }} placeholder="L-001" />
-              <span className="muted">{t.codeHint}</span>
-            </div>
-            <button className="primary big-action" disabled={loading || !isLearnerCode(learner)} onClick={load}>{loading ? t.loading : t.startActivity}</button>
-            <p className="muted">{t.oneStep}</p>
-            {message && <p className="notice" role="alert">{message}</p>}
-          </div>
-        )}
-
-        {activities.length > 0 && finished && (
-          <div className="card">
-            <div className="result" role="status">
-              <h3>{t.allDone}</h3>
-              <div className="actions"><button className="primary" onClick={() => go('welcome')}>{t.home}</button></div>
-            </div>
-          </div>
-        )}
-
-        {selected && !finished && (
-          <div className="session-layout">
-            <div className="stage"><div className="picture">{selected.modality === 'listening' ? '🔊' : selected.picture || '📖'}</div></div>
-            <div>
-              <span className="pill">{childModalityLabels[lang][selected.modality]}</span>
-              {selected.modality === 'listening'
-                ? <h2 className="sentence">{selected.prompt_text}</h2>
-                : <><h2 className="sentence">{selected.parent_text}</h2><p className="gloss">{selected.prompt_text}</p></>}
-
-              {selected.modality === 'speaking' && (
-                <div className="card">
-                  <Recorder key={selected.activity_id} learner={learner} passage={selected.micro_item_id} lang={lang} onResult={saveSpeech} />
-                  <p className="notice">{t.audioNotice}</p>
-                </div>
-              )}
-
-              {selected.modality === 'writing' && (
-                <div className="card">
-                  <p className="muted">{t.writeOnPaper}</p>
-                  <button className="primary big-action" disabled={loading || done} onClick={() => record('paper_handoff', 'deferred')}>{t.finished}</button>
-                </div>
-              )}
-
-              {(selected.modality === 'reading' || selected.modality === 'listening') && (
-                <div>
-                  {selected.modality === 'listening' && <div className="actions"><button className="secondary" onClick={listen}>{t.listen}</button></div>}
-                  {voiceNote && <p className="notice" role="status">{voiceNote}</p>}
-                  <p className="muted">{t.chooseFits}</p>
-                  <div className="choice-row" role="group" aria-label={t.chooseFits}>
-                    {(selected.options ?? []).map((option, i) => {
-                      const text = optionText(option)
-                      return <button className="choice" key={`${i}-${text}`} disabled={loading || done} onClick={() => record(text, 'deferred')}>{text}</button>
-                    })}
-                  </div>
-                </div>
-              )}
-
-              {done && selected.modality === 'speaking' && speech && <ChildResult result={speech} lang={lang} next={advance} onFacilitator={() => go('facilitator')} />}
-              {done && selected.modality !== 'speaking' && (
-                <div className="result" role="status">
-                  <h3>{t.saved}</h3>
-                  <p>{t.savedNote}</p>
-                  <button className="primary" onClick={advance}>{t.next}</button>
-                </div>
-              )}
-              {message && !done && (
-                <div className="notice" role="alert">
-                  <p>{message}</p>
-                  {speech && <button className="secondary" onClick={() => saveSpeech(speech)}>{t.retry}</button>}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-    </main>
-  )
-}
 
 function PinGate({ onToken, notice }: { onToken: (token: string) => void; notice?: string }) {
   const [pin, setPin] = useState('')
@@ -220,14 +68,19 @@ function PinGate({ onToken, notice }: { onToken: (token: string) => void; notice
   )
 }
 
-export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) => void; reading?: ReactNode }) {
+export function FacilitatorWorkspace({ go, reading, lang }: { go: (route: RouteName) => void; reading?: ReactNode; lang: Lang }) {
+  const t = copy[lang]
   const [token, setToken] = useState(() => readSession('sp_facilitator_token'))
   const [tab, setTab] = useState<Tab>('plan')
-  const [learner, setLearner] = useState(() => readSession('sp_learner', 'L-001'))
+  const [roster, setRoster] = useState<RosterEntry[]>(() => parseRoster(readPreference(ROSTER_KEY)))
+  const [learner, setLearner] = useState(() => readSession('sp_learner') || readPreference('sp_last_learner') || parseRoster(readPreference(ROSTER_KEY))[0]?.code || 'L-001')
+  const [newCode, setNewCode] = useState('')
+  const [newLabel, setNewLabel] = useState('')
   const [activities, setActivities] = useState<Activity[]>([])
   const [selected, setSelected] = useState<Activity | null>(null)
   const [queue, setQueue] = useState<ActivityQueue | null>(null)
   const [progress, setProgress] = useState<ActivityProgress | null>(null)
+  const [classRows, setClassRows] = useState<Record<string, ActivityProgress | null>>({})
   const [guide, setGuide] = useState<GuideResult | null>(null)
   const [query, setQuery] = useState('How may teachers use formative reading assessment?')
   const [message, setMessage] = useState('')
@@ -236,21 +89,27 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
   // Filtering returns a new array. The loaded plan and its counts are never changed by a filter.
   const visibleActivities = useMemo(() => modalityFilter ? activities.filter(item => item.modality === modalityFilter) : activities, [activities, modalityFilter])
   const toggleFilter = (modality: ActivityModality) => setModalityFilter(current => current === modality ? null : modality)
+  const current = roster.find(item => item.code === learner)
 
+  // The class list stays on this device so it outlives the browser session. It never reaches the server.
+  const saveRoster = (next: RosterEntry[]) => { setRoster(next); writePreference(ROSTER_KEY, JSON.stringify(next)) }
   const lock = (reason = '') => { removeSession('sp_facilitator_token'); setToken(''); setTab('plan'); setMessage(reason) }
-  // An expired token sends the facilitator back to the PIN gate with a clear reason. Raw API detail is never shown.
+  // An expired token sends the teacher back to the PIN gate with a clear reason. Raw API detail is never shown.
   const fail = (error: unknown, fallback: string) => {
     if (isUnauthorized(error)) { lock(facilitatorErrorMessage(error, fallback)); return }
     setMessage(facilitatorErrorMessage(error, fallback))
   }
 
-  const loadPlan = async () => {
-    if (!isLearnerCode(learner)) { setMessage('Enter a learner code like L-001.'); return }
+  const loadPlan = async (code = learner) => {
+    if (!isLearnerCode(code)) { setMessage('Enter a learner code like L-001.'); return }
     setLoading(true)
     setMessage('')
     try {
-      const data = await listActivities(learner)
-      writeSession('sp_learner', learner)
+      const data = await listActivities(code)
+      writeSession('sp_learner', code)
+      writePreference('sp_last_learner', code)
+      if (roster.some(item => item.code === code)) saveRoster(upsertLearner(roster, { code }))
+      setLearner(code)
       setActivities(data.activities)
       setSelected(data.activities[0] || null)
       setModalityFilter(null)
@@ -260,16 +119,26 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
       setLoading(false)
     }
   }
+  const addLearner = () => {
+    if (!isLearnerCode(newCode)) { setMessage('Enter a learner code like L-001.'); return }
+    saveRoster(upsertLearner(roster, { code: newCode, label: newLabel }))
+    setNewCode(''); setNewLabel(''); setMessage('')
+    loadPlan(newCode)
+  }
   const loadQueue = async () => { if (!token) return; try { setQueue(await activityQueue(token)) } catch (e) { fail(e, 'Mark queue unavailable.') } }
   const loadProgress = async () => { try { setProgress(await activityProgress(learner)) } catch (e) { fail(e, 'Progress unavailable.') } }
+  const loadClass = async () => {
+    const entries = await Promise.all(roster.map(async item => [item.code, await activityProgress(item.code).catch(() => null)] as const))
+    setClassRows(Object.fromEntries(entries))
+  }
   useEffect(() => { if (token) loadPlan() }, [token])
-  useEffect(() => { if (tab === 'mark') loadQueue(); if (tab === 'progress') loadProgress() }, [tab, learner])
-  if (!token) return <main><div className="screen"><PinGate onToken={setToken} notice={message} /><button className="link-btn" onClick={() => go('welcome')}>← Home</button></div></main>
+  useEffect(() => { if (tab === 'mark') loadQueue(); if (tab === 'progress') { loadProgress(); loadClass() } }, [tab, learner])
+  if (!token) return <main><div className="screen"><PinGate onToken={setToken} notice={message} /><button className="link-btn" onClick={() => go('welcome')}>← {t.home}</button></div></main>
 
   const mark = async (eventId: string, result: TeacherResult) => {
     try {
       await markActivity(eventId, result, token)
-      setMessage('Teacher mark saved.')
+      setMessage('Mark saved.')
       await loadQueue()
       await loadProgress()
     } catch (e) {
@@ -283,38 +152,68 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
   const showing = modalityFilter
     ? `Showing ${modalityLabels[modalityFilter]} only (${visibleActivities.length} of ${activities.length})`
     : `Showing all ${activities.length} activities`
+  const openAsLearner = () => { writeSession('sp_learner', learner); go('activities') }
+  const anyResponse = queue?.events.some(event => event.response_text)
 
   return (
     <main>
       <div className="screen workspace">
         <div className="split">
           <div>
-            <div className="eyebrow">Facilitator workspace</div>
-            <h2 className="section-title">Soma Pamoja</h2>
+            <div className="eyebrow">Teacher workspace</div>
+            <h2 className="section-title">{learnerName(roster, learner)}</h2>
           </div>
-          <div className="actions">
+          <div className="actions" style={{ marginTop: 0 }}>
+            <button className="secondary" onClick={openAsLearner}>Open as learner</button>
             <button className="secondary" onClick={() => lock()}>Lock</button>
-            <button className="secondary" onClick={() => go('activities')}>Child preview</button>
           </div>
         </div>
         <div className="workspace-tabs" role="tablist">
-          {(Object.keys(labels) as Tab[]).map(item => <button key={item} className={tab === item ? 'warm' : 'secondary'} onClick={() => setTab(item)} role="tab" aria-selected={tab === item}>{labels[item]}</button>)}
+          {(Object.keys(labels) as Tab[]).map(item => (
+            <button key={item} className={tab === item ? 'warm' : 'secondary'} onClick={() => setTab(item)} role="tab" aria-selected={tab === item}>
+              <b><span className="emoji" aria-hidden="true">{tabInfo[item].emoji}</span> {labels[item]}</b><small>{tabInfo[item].sub}</small>
+            </button>
+          ))}
         </div>
+        <p className="tab-help" role="note"><span className="emoji" aria-hidden="true">💡</span><span>{tabInfo[tab].help}</span></p>
 
         {tab === 'plan' && (
           <section className="workspace-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">01 · Plan</span><h3 className="section-title">Choose the next small step</h3></div>
+              <div><span className="eyebrow">Step 1</span><h3 className="section-title">Who is learning?</h3></div>
               <DraftBadge />
             </div>
-            <div className="field">
-              <label htmlFor="plan-learner">Learner</label>
-              <input id="plan-learner" autoComplete="off" value={learner} onChange={e => setLearner(normalizeLearnerInput(e.target.value))} onKeyDown={e => { if (e.key === 'Enter') loadPlan() }} />
+            {roster.length > 0 && (
+              <div className="roster" role="group" aria-label="My learners">
+                {roster.map(item => (
+                  <button key={item.code} className={item.code === learner ? 'roster-row on' : 'roster-row'} aria-pressed={item.code === learner} onClick={() => loadPlan(item.code)}>
+                    <span><b>{item.label || item.code}</b><small>{item.label ? item.code : 'No private label yet'}{item.lastSeen ? ` · last opened ${new Date(item.lastSeen).toLocaleDateString()}` : ''}</small></span>
+                    <span aria-hidden="true">{item.code === learner ? '✓' : '→'}</span>
+                  </button>
+                ))}
+              </div>
+            )}
+            <div className="roster-add">
+              <div className="field"><label htmlFor="new-code">Learner code</label><input id="new-code" autoComplete="off" placeholder="L-001" value={newCode} onChange={e => setNewCode(normalizeLearnerInput(e.target.value))} onKeyDown={e => { if (e.key === 'Enter') addLearner() }} /></div>
+              <div className="field"><label htmlFor="new-label">Private label (optional)</label><input id="new-label" autoComplete="off" maxLength={MAX_LABEL} placeholder="Name or nickname, for you only" value={newLabel} onChange={e => setNewLabel(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') addLearner() }} /></div>
+              <button className="warm" disabled={!isLearnerCode(newCode)} onClick={addLearner}>Add learner</button>
             </div>
-            <div className="modality-grid" role="group" aria-label="Filter by modality">
+            <p className="privacy-note">Labels and notes are saved on this device only and are never sent to the server. The server only sees the code. Clearing this browser's data removes them.</p>
+            {current && (
+              <div className="field">
+                <label htmlFor="learner-note">Private note about {current.label || current.code}</label>
+                <input id="learner-note" maxLength={400} value={current.note} placeholder="For example: needs help with silent letters" onChange={e => saveRoster(upsertLearner(roster, { code: current.code, note: e.target.value }, current.lastSeen))} />
+                <button className="link-btn" style={{ justifySelf: 'start' }} onClick={() => saveRoster(removeLearner(roster, current.code))}>Remove from my list</button>
+              </div>
+            )}
+
+            <div className="panel-heading" style={{ marginTop: '1.5rem' }}>
+              <div><span className="eyebrow">Step 2</span><h3 className="section-title">Pick a skill</h3></div>
+            </div>
+            <div className="modality-grid" role="group" aria-label="Filter by skill">
               {modalities.map(modality => (
                 <button className={modalityFilter === modality ? 'modality-card selected' : 'modality-card'} key={modality} aria-pressed={modalityFilter === modality} onClick={() => toggleFilter(modality)}>
-                  <span>{modalityLabels[modality]}</span>
+                  <span><span className="emoji" aria-hidden="true">{modalityEmoji[modality]}</span> {modalityLabels[modality]}</span>
                   <b>{activities.filter(item => item.modality === modality).length}</b>
                   <small>draft activities</small>
                 </button>
@@ -327,32 +226,31 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
             <div className="activity-list">
               {visibleActivities.map(item => (
                 <button key={item.activity_id} className="activity-row" onClick={() => { setSelected(item); setTab('run') }}>
-                  <span>{item.picture}</span><b>{item.activity_id}</b><span>{modalityLabels[item.modality]}</span><small>{item.topic}</small>
+                  <span className="emoji">{item.picture}</span><b>{item.activity_id}</b><span>{modalityLabels[item.modality]}</span><small>{item.topic}</small>
                 </button>
               ))}
             </div>
             {!visibleActivities.length && <p className="notice">No activities to show. Check the learner code, then refresh the plan.</p>}
-            <button className="warm" style={{ marginTop: '1rem' }} disabled={loading || !isLearnerCode(learner)} onClick={loadPlan}>{loading ? 'Loading...' : 'Refresh plan'}</button>
+            <button className="warm" style={{ marginTop: '1rem' }} disabled={loading || !isLearnerCode(learner)} onClick={() => loadPlan()}>{loading ? 'Loading...' : 'Refresh plan'}</button>
           </section>
         )}
 
         {tab === 'run' && (
           <section className="workspace-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">02 · Run</span><h3 className="section-title">One activity, one response</h3></div>
+              <div><span className="eyebrow">Step 3</span><h3 className="section-title">One activity at a time</h3></div>
               {selected && <span className="pill">{modalityLabels[selected.modality]}</span>}
             </div>
             {selected ? (
               <>
                 <DraftBadge />
-                <div className="run-card">
-                  <div className="run-picture">{selected.picture || '📖'}</div>
+                <div className="run-card" data-theme={selected.topic}>
+                  <Scene picture={selected.picture || '📖'} small />
                   <div>
-                    <h3>{selected.prompt_text}</h3>
-                    <p className="muted">{selected.parent_text}</p>
+                    <h3>{selected.parent_text}</h3>
+                    <p className="muted">{selected.prompt_text}</p>
                     <p className="muted">{modalityHelp[selected.modality]}</p>
-                    <p className="muted">Machine evidence and teacher judgement remain separate.</p>
-                    <button className="primary" onClick={() => go('activities')}>Open child runner</button>
+                    <button className="primary" onClick={openAsLearner}>Open as {learnerName(roster, learner)}</button>
                   </div>
                 </div>
                 <div className="split">
@@ -362,7 +260,7 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
                 <div className="activity-list">
                   {visibleActivities.map(item => (
                     <button key={item.activity_id} className={selected.activity_id === item.activity_id ? 'activity-row selected' : 'activity-row'} onClick={() => setSelected(item)}>
-                      <span>{item.picture}</span><b>{item.activity_id}</b><span>{modalityLabels[item.modality]}</span><small>{item.topic}</small>
+                      <span className="emoji">{item.picture}</span><b>{item.activity_id}</b><span>{modalityLabels[item.modality]}</span><small>{item.topic}</small>
                     </button>
                   ))}
                 </div>
@@ -374,25 +272,27 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
         {tab === 'mark' && (
           <section className="workspace-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">03 · Mark</span><h3 className="section-title">Needs your mark</h3></div>
+              <div><span className="eyebrow">Step 4</span><h3 className="section-title">Needs your mark</h3></div>
               <span className="pill">{queue?.events.length ?? 0} waiting</span>
             </div>
+            {queue?.events.length && !anyResponse ? <p className="notice">This server does not send what the child answered yet. Ask the child to show you their answer or book, then mark it. (Backend change needed, see the handover notes.)</p> : null}
             {queue?.events.length ? queue.events.map(event => {
               const activity = activities.find(item => item.activity_id === event.activity_id)
               return (
                 <div className="queue-card" key={event.event_id}>
-                  <div className="split"><b>{event.activity_id}</b><span className="pill">{modalityLabels[event.modality] ?? event.modality}</span></div>
-                  {activity && <p><span aria-hidden="true">{activity.picture} </span>{activity.parent_text}</p>}
-                  <p className="muted">{event.learner} · machine: {event.machine_result}{event.created_at ? ` · ${formatWhen(event.created_at)}` : ''}</p>
+                  <div className="split"><b>{learnerName(roster, event.learner)}</b><span className="pill"><span className="emoji" aria-hidden="true">{modalityEmoji[event.modality] ?? ''}</span> {modalityLabels[event.modality] ?? event.modality}</span></div>
+                  {activity && <p><span className="emoji" aria-hidden="true">{activity.picture} </span>{activity.parent_text}</p>}
+                  {event.response_text && <div className="response-box">{event.response_text === 'paper_handoff' ? 'Written in an exercise book. Look at the book.' : event.response_text}</div>}
+                  <p className="muted">{event.activity_id} · {machineText(event.machine_result)}{event.created_at ? ` · ${formatWhen(event.created_at)}` : ''}</p>
                   <div className="actions">
-                    {(['correct', 'with_help', 'not_yet', 'not_sure'] as TeacherResult[]).map(result => <button className="secondary" key={result} onClick={() => mark(event.event_id, result)}>{result.replace('_', ' ')}</button>)}
+                    {(Object.keys(resultText) as TeacherResult[]).map(result => <button className="secondary" key={result} onClick={() => mark(event.event_id, result)}>{resultText[result]}</button>)}
                   </div>
                 </div>
               )
             }) : (
               <div className="empty-state">
-                <b>No unresolved events.</b>
-                <p className="muted">Picture responses, deferred speech and paper writing evidence will appear here.</p>
+                <b>Nothing waiting for you.</b>
+                <p className="muted">Picture answers, deferred speech and written work will appear here.</p>
               </div>
             )}
           </section>
@@ -401,27 +301,50 @@ export function FacilitatorWorkspace({ go, reading }: { go: (route: RouteName) =
         {tab === 'progress' && (
           <section className="workspace-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">04 · Progress</span><h3 className="section-title">Small evidence, visible growth</h3></div>
+              <div><span className="eyebrow">Step 5</span><h3 className="section-title">How is {current?.label || learner} doing?</h3></div>
               <span className="pill">{learner}</span>
             </div>
             {progress?.by_modality.map(row => (
               <div className="progress-row" key={row.modality}>
-                <div className="split"><b>{modalityLabels[row.modality] ?? row.modality}</b><span>{row.marked} marked / {row.events} events</span></div>
+                <div className="split"><b><span className="emoji" aria-hidden="true">{modalityEmoji[row.modality]}</span> {modalityLabels[row.modality] ?? row.modality}</b><span>{row.marked} marked of {row.events} done</span></div>
                 <div className="bar"><i style={{ width: `${row.events ? Math.min(100, row.marked / row.events * 100) : 0}%` }} /></div>
               </div>
             ))}
-            {!progress?.by_modality.length && <p className="notice">No activity evidence yet.</p>}
+            {!progress?.by_modality.length && <p className="notice">No activity evidence yet for this learner.</p>}
+            {current?.note && <p className="notice"><b>Your note:</b> {current.note}</p>}
+            {roster.length > 1 && (
+              <>
+                <h3 className="section-title" style={{ marginTop: '1.5rem' }}>My class</h3>
+                <div style={{ overflowX: 'auto' }}>
+                  <table className="class-table">
+                    <thead><tr><th>Learner</th>{modalities.map(m => <th key={m}>{modalityLabels[m]}</th>)}</tr></thead>
+                    <tbody>
+                      {roster.map(item => {
+                        const row = classRows[item.code]
+                        return (
+                          <tr key={item.code}>
+                            <td><button className="link-btn" onClick={() => loadPlan(item.code)}>{item.label || item.code}</button></td>
+                            {modalities.map(m => { const cell = row?.by_modality.find(x => x.modality === m); return <td className="num" key={m}>{row ? (cell ? `${cell.marked}/${cell.events}` : '0/0') : '-'}</td> })}
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="privacy-note">Each cell shows marked / done.</p>
+              </>
+            )}
           </section>
         )}
 
         {tab === 'guide' && (
           <section className="workspace-panel">
             <div className="panel-heading">
-              <div><span className="eyebrow">05 · Guide</span><h3 className="section-title">Cited teacher guidance</h3></div>
-              <span className="pill">BM25 · extractive</span>
+              <div><span className="eyebrow">Teacher help</span><h3 className="section-title">Ask about teaching reading</h3></div>
+              <span className="pill">Quoted from sources</span>
             </div>
             <div className="field">
-              <label htmlFor="guide-query">Ask a teacher question</label>
+              <label htmlFor="guide-query">Your question</label>
               <input id="guide-query" value={query} onChange={e => setQuery(e.target.value)} onKeyDown={e => { if (e.key === 'Enter') searchGuide() }} />
             </div>
             <button className="warm" disabled={!query.trim()} onClick={searchGuide}>Search guide</button>

@@ -7,7 +7,9 @@ import { Recorder } from './Recorder'
 import type { AttemptResult, ComprehensionVerdict, Dashboard, EvalSummary, Item, NextResponse, ReadingHumanVerdict } from '../api/types'
 import { copy, type Lang } from '../i18n'
 import { readPreference, readSession, removeSession, writePreference, writeSession } from '../lib/storage'
-import { ChildActivityRunner, FacilitatorWorkspace } from './ActivityWorkspace'
+import { FacilitatorWorkspace } from './ActivityWorkspace'
+import { ChildActivityRunner } from './LearnerApp'
+import { Scene } from './Scene'
 
 type Route = 'welcome' | 'session' | 'facilitator' | 'activities'
 type HealthState = 'connecting' | 'healthy' | 'slow' | 'offline'
@@ -32,9 +34,60 @@ function useHealth() {
 function Logo() { return <div className="brand"><svg className="brand-mark" viewBox="0 0 64 64" aria-hidden="true"><path d="M12 24c9-6 16-4 20 2 4-6 11-8 20-2v23c-9-5-16-4-20 2-4-6-11-7-20-2V24Z" fill="#fbf5e9"/><path d="M32 26v23M32 17c0-6 6-9 10-9-1 6-4 9-10 9ZM31 19c-6 0-10-3-11-9 5 0 11 3 11 9Z" fill="none" stroke="#f2b705" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"/></svg><span className="brand-name">Soma Pamoja</span></div> }
 function DraftBar({ lang }: { lang: Lang }) { return <div className="draftbar" role="note">{copy[lang].draft}</div> }
 function StatusPill({ state, latency }: { state: HealthState; latency: number | null }) { const label = state === 'healthy' ? 'healthy' : state === 'slow' ? 'slow' : state === 'offline' ? 'offline' : 'connecting'; return <span className={`status ${state}`} role="status"><i />Backend: {import.meta.env.VITE_BACKEND_LABEL || 'Vultr'} · {label}{latency !== null ? `, ${latency} ms` : ''}</span> }
-function Header({ lang, setLang, healthState, latency, go }: { lang: Lang; setLang: (l: Lang) => void; healthState: HealthState; latency: number | null; go: (r: Route) => void }) { const toggle = () => { const next = lang === 'sw' ? 'en' : 'sw'; writePreference('sp_language', next); setLang(next) }; return <header className="topbar"><button className="link-btn" onClick={() => go('welcome')} aria-label="Soma Pamoja home"><Logo /></button><div className="top-actions"><StatusPill state={healthState} latency={latency} /><button className="icon-btn" onClick={toggle} aria-label={lang === 'sw' ? 'Switch to English' : 'Switch to Kiswahili'}>{lang === 'sw' ? 'EN' : 'SW'}</button><button className="icon-btn" onClick={() => go('facilitator')} aria-label="Open facilitator">⌁</button></div></header> }
+type Variant = 'landing' | 'learner' | 'teacher'
+function Header({ lang, setLang, healthState, latency, go, variant }: { lang: Lang; setLang: (l: Lang) => void; healthState: HealthState; latency: number | null; go: (r: Route) => void; variant: Variant }) {
+  const t = copy[lang]
+  const choose = (next: Lang) => { writePreference('sp_language', next); setLang(next) }
+  return (
+    <header className={`topbar ${variant === 'teacher' ? 'teacher' : ''}`}>
+      {variant === 'learner'
+        ? <div className="brand"><Logo /></div>
+        : <button className="link-btn" style={{ padding: 0 }} onClick={() => go('welcome')} aria-label="Soma Pamoja home"><Logo /></button>}
+      <div className="top-actions">
+        {variant === 'teacher' && <span className="role-tag">{t.teacherTag}</span>}
+        {variant !== 'learner' && <StatusPill state={healthState} latency={latency} />}
+        <div className="lang" role="group" aria-label="Language">
+          <button aria-pressed={lang === 'sw'} onClick={() => choose('sw')}>{t.langSw}</button>
+          <button aria-pressed={lang === 'en'} onClick={() => choose('en')}>{t.langEn}</button>
+        </div>
+        {variant === 'teacher' && <button className="link-btn" onClick={() => go('welcome')}>{t.home}</button>}
+      </div>
+    </header>
+  )
+}
 
-function Welcome({ lang, go, healthState, latency }: { lang: Lang; go: (r: Route) => void; healthState: HealthState; latency: number | null }) { const t = copy[lang]; return <main><div className="hero"><div><div className="eyebrow">Voice-first · Kiswahili</div><h1>{t.tagline}</h1><p>{t.sub} The school may close. The learning should not have to.</p><div className="actions"><button className="primary" onClick={() => go('session')}>{t.start} <span aria-hidden="true">→</span></button><button className="secondary" onClick={() => go('activities')}>{t.tryActivity}</button><button className="secondary" onClick={() => go('facilitator')}>{t.facilitator}</button></div><div style={{ marginTop: '1rem' }}><StatusPill state={healthState} latency={latency} /></div></div><div className="card"><div className="stage"><div className="picture">📖</div></div><p className="sentence" style={{ fontSize: 'clamp(1.8rem,5vw,3rem)' }}>Mtoto anasoma kitabu.</p><p className="gloss">A short sentence, one reader, one gentle step at a time.</p></div></div><section className="grid-2"><div className="card"><h2 className="section-title">How it works</h2><p className="muted">Choose a sentence. The child reads. Speech becomes words. The system is sure, or a person decides. Then the facilitator asks one small question.</p></div><div className="card"><h2 className="section-title">Honest by design</h2><p className="muted">Draft content stays visible. Typed demo stays separate from speech evidence. Reading and comprehension are recorded as different things.</p></div></section><footer className="footer">Aligned to the UNESCO Global Proficiency Framework and Kenya Grade 1 to 3 Kiswahili expectations, pending native-speaker review. Prototype for HackGlobal 2026.</footer></main> }
+function Welcome({ lang, go }: { lang: Lang; go: (r: Route) => void }) {
+  const t = copy[lang]
+  const skills: [string, string, string][] = [['👀', t.skillRead, t.skillReadHint], ['👂', t.skillListen, t.skillListenHint], ['🎤', t.skillSpeak, t.skillSpeakHint], ['✍️', t.skillWrite, t.skillWriteHint]]
+  return (
+    <main>
+      <div className="hero" data-theme="school">
+        <div>
+          <div className="eyebrow">{t.eyebrow}</div>
+          <h1>{t.tagline}</h1>
+          <p className="lede">{t.lede}</p>
+          <div className="doors">
+            <button className="door learner" onClick={() => go('activities')}><span className="door-icon" aria-hidden="true">🎒</span><span><b>{t.doorLearner}</b><span className="hint">{t.doorLearnerHint}</span></span><span className="go" aria-hidden="true">→</span></button>
+            <button className="door teacher" onClick={() => go('facilitator')}><span className="door-icon" aria-hidden="true">🍎</span><span><b>{t.doorTeacher}</b><span className="hint">{t.doorTeacherHint}</span></span><span className="go" aria-hidden="true">→</span></button>
+          </div>
+        </div>
+        <Scene picture="📖" />
+      </div>
+      <section aria-labelledby="how-title">
+        <h2 id="how-title" className="section-title">{t.howTitle}</h2>
+        <div className="steps">
+          {skills.map(([emoji, name, hint]) => <div className="card step-card" key={name}><span className="emoji" aria-hidden="true">{emoji}</span><b>{name}</b><p>{hint}</p></div>)}
+        </div>
+      </section>
+      <section className="promise">
+        <div className="card"><h3>{t.promise1t}</h3><p>{t.promise1b}</p></div>
+        <div className="card"><h3>{t.promise2t}</h3><p>{t.promise2b}</p></div>
+        <div className="card"><h3>{t.promise3t}</h3><p>{t.promise3b}</p></div>
+      </section>
+      <footer className="footer"><p>{t.footer}</p></footer>
+    </main>
+  )
+}
 
 function LearnerSetup({ value, setValue, onStart, lang }: { value: string; setValue: (v: string) => void; onStart: () => void; lang: Lang }) { const t = copy[lang]; return <div className="card"><div className="field"><label htmlFor="learner">{t.code}</label><input id="learner" inputMode="text" value={value} onChange={e => setValue(e.target.value.toUpperCase().replace(/[^L0-9-]/g, ''))} onBlur={() => { if (/^L\d{3,6}$/.test(value)) setValue(`L-${value.slice(1)}`) }} placeholder="L-001" /><span className="muted">{t.codeHint}</span></div><button className="primary big-action" disabled={!/^L-\d{3,6}$/.test(value)} onClick={onStart}>{t.start}</button></div> }
 
@@ -67,12 +120,11 @@ function Session({ lang, go }: { lang: Lang; go: (r: Route) => void }) {
             <div className="eyebrow">{t.childMode}</div>
             <h2 className="section-title">{t.tagline}</h2>
           </div>
-          <button className="secondary" onClick={() => go('facilitator')}>{t.facilitator}</button>
         </div>
         {!next && <LearnerSetup value={learner} setValue={setLearner} onStart={load} lang={lang} />}
         {next && (
           <div className="session-layout">
-            <div className="stage"><div className="picture">{next.passage.picture || '📖'}</div></div>
+            <Scene picture={next.passage.picture || '📖'} />
             <div>
               <h2 className="sentence">{next.passage.text}</h2>
               {next.passage.en && <p className="gloss">{next.passage.en}</p>}
@@ -82,7 +134,7 @@ function Session({ lang, go }: { lang: Lang; go: (r: Route) => void }) {
                 <Recorder learner={learner} passage={next.passage.id} lang={lang} onResult={r => { setResult(r); setError('') }} />
                 <p className="notice">{t.audioNotice}</p>
               </div>
-              {result && <ChildResult result={result} lang={lang} next={load} onFacilitator={() => go('facilitator')} />}
+              {result && <ChildResult result={result} lang={lang} next={load} />}
             </div>
           </div>
         )}
@@ -284,14 +336,16 @@ export default function App() {
   const [lang, setLang] = useState<Lang>(() => readPreference('sp_language', 'en') === 'sw' ? 'sw' : 'en')
   const h = useHealth()
   useEffect(() => { document.documentElement.lang = lang }, [lang])
+  useEffect(() => { window.scrollTo(0, 0) }, [route])
+  const variant: Variant = route === 'welcome' ? 'landing' : route === 'facilitator' ? 'teacher' : 'learner'
   return (
-    <div className="app">
-      <Header lang={lang} setLang={setLang} healthState={h.state} latency={h.latency} go={go} />
+    <div className={`app ${variant === 'teacher' ? 'teacher-app' : variant === 'learner' ? 'learner-app' : ''}`}>
+      <Header lang={lang} setLang={setLang} healthState={h.state} latency={h.latency} go={go} variant={variant} />
       <DraftBar lang={lang} />
-      {route === 'welcome' && <Welcome lang={lang} go={go} healthState={h.state} latency={h.latency} />}
+      {route === 'welcome' && <Welcome lang={lang} go={go} />}
       {route === 'session' && <Session lang={lang} go={go} />}
       {route === 'activities' && <ChildActivityRunner go={go} lang={lang} />}
-      {route === 'facilitator' && <FacilitatorWorkspace go={go} reading={<Facilitator lang={lang} go={go} />} />}
+      {route === 'facilitator' && <FacilitatorWorkspace go={go} reading={<Facilitator lang={lang} go={go} />} lang={lang} />}
     </div>
   )
 }
