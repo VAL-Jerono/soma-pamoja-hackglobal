@@ -1,5 +1,7 @@
 import type { ActivityEvent, ActivityList, ActivityProgress, ActivityQueue, AttemptResult, ComprehensionResult, Dashboard, EvalSummary, GuideResult, NextResponse, Health, ReadingHumanVerdict, ComprehensionVerdict, TeacherResult } from './types'
 
+import { detailText } from '../lib/errors'
+
 export type ApiErrorKind = 'Offline' | 'Timeout' | 'Unauthorized' | 'RateLimited' | 'Validation' | 'EmptyBank' | 'NotServed' | 'Server'
 export class ApiError extends Error { constructor(public kind: ApiErrorKind, message: string, public status?: number) { super(message) } }
 
@@ -13,7 +15,7 @@ async function request<T>(path: string, init: RequestInit = {}, timeout = 8000, 
     const response = await fetch(`${base}${path}`, { ...init, signal: controller.signal })
     if (!response.ok) {
       let detail = response.statusText
-      try { detail = (await response.json()).detail || detail } catch { /* plain response */ }
+      try { detail = detailText(await response.json(), detail) } catch { /* plain response */ }
       const kind: ApiErrorKind = response.status === 401 ? 'Unauthorized' : response.status === 429 ? 'RateLimited' : response.status === 400 ? 'Validation' : response.status === 404 && detail.startsWith('empty_bank') ? 'EmptyBank' : response.status === 404 ? 'NotServed' : response.status >= 500 ? 'Server' : 'Validation'
       throw new ApiError(kind, detail, response.status)
     }
